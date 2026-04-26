@@ -194,7 +194,7 @@ pulseira-care-plus/
 
 ### 1. Simulação (Wokwi)
 
-1. Acesse [wokwi.com](https://wokwi.com) e crie um novo projeto ESP32
+1. Acesse [wokwi.com](https://wokwi.com/projects/462390704231379969) e crie um novo projeto ESP32
 2. Importe o `diagram.json` da pasta `wokwi/`
 3. Cole o conteúdo de `firmware/sketch.ino`
 4. Ajuste `BROKER_MQTT` no código para o IP do seu servidor
@@ -236,9 +236,3 @@ Instale via Arduino Library Manager:
 - `PubSubClient` (Nick O'Leary)
 
 ---
-
-## Próximas Etapas
-
-- [ ] Implementar padrões de vibração distintos por comando (`agua`, outros alertas)
-- [ ] Adicionar leitura de nível de bateria
-- [ ] Dashboard de visualização em tempo real com dados do STH-Comet
