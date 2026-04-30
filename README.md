@@ -291,3 +291,4 @@ A partir dessa base, foram adicionados os módulos de pedômetro com ESP32, vín
 | Felipe Menezes | Desenvolvimento |
 | João Sarracine | Desenvolvimento |
 | João Gonzales | Desenvolvimento |
+
