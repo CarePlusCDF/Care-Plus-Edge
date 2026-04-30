@@ -1,6 +1,6 @@
 # Pedômetro Care Plus
 
-Solução IoT de monitoramento de atividade física baseada em ESP32, integrada ao FIWARE via MQTT. O sistema é composto por três módulos independentes: a pulseira pedômetro, o monitor LED de atividade e o vínculo NFC para identificação do usuário.
+Solução IoT de monitoramento de atividade física baseada em ESP32, integrada ao FIWARE via MQTT. O sistema é composto por três módulos independentes: a pulseira pedômetro, o Lâmpada de LED de atividade e o vínculo NFC para identificação do usuário.
 
 ---
 
@@ -19,7 +19,7 @@ flowchart TD
         ESP1 --> SERVO
     end
 
-    subgraph MONITOR["Monitor LED (ESP32)"]
+    subgraph MONITOR["LAMPADA DE LED (ESP32)"]
         ESP2["ESP32\nled_monitor.ino"]
         LED["LED RGB\nAzul / Amarelo / Verde"]
         ESP2 --> LED
@@ -62,7 +62,7 @@ flowchart TD
 ### 1. Pulseira Pedômetro (`wokwiSimulator.ino`)
 ESP32 com acelerômetro MPU-6050. Detecta passos, calcula média de passos por minuto, controla vibração por servo motor e gerencia botões de interação. Publica dados no broker MQTT e integra ao FIWARE via IoT Agent UltraLight.
 
-### 2. Monitor LED (`led_monitor.ino`)
+### 2. Lâmpada de LED (`led_monitor.ino`)
 ESP32 independente com LED RGB. Recebe `steps_per_minute` via MQTT e indica visualmente o nível de atividade por cor:
 
 | Faixa | Cor | Significado |
@@ -96,7 +96,7 @@ Servidor web Python que recebe a leitura de uma tag NTAG213 pelo celular do usu�
 </td>
 <td valign="top" width="50%">
 
-### Monitor LED
+### Lâmpada de Led
 
 | Componente | Especificação |
 |------------|--------------|
@@ -130,7 +130,7 @@ Servidor web Python que recebe a leitura de uma tag NTAG213 pelo celular do usu�
 </td>
 <td valign="top" width="50%">
 
-### Monitor LED
+### Lâmpada LED
 
 | Pino | Função |
 |------|--------|
@@ -196,7 +196,7 @@ Celular encosta na pulseira (NTAG213)
 → browser exibe confirmação de sucesso
 ```
 
-### LED Monitor
+### Lâmpada de LED
 ```
 ESP32 LED subscreve /ul/TEF/step001/attrs via MQTT
 → extrai campo m| (steps_per_minute)
@@ -256,7 +256,7 @@ Tipo: Pedometer
 | Módulo | Link |
 |--------|------|
 | Pulseira Pedômetro | [Wokwi - Pedômetro](https://wokwi.com/projects/462390704231379969) |
-| Monitor LED | [Wokwi - Luminária](https://wokwi.com/projects/458699894496782337) |
+| Lâmpada de LED | [Wokwi - Luminária](https://wokwi.com/projects/458699894496782337) |
 
 > O componente MFRC522 exibido no diagrama da pulseira representa a tag NTAG213 passiva. Tags NFC não se conectam ao ESP32 — a leitura é feita pelo celular do usuário.
 
@@ -276,7 +276,7 @@ Este projeto é derivado do [FIWARE Descomplicado](https://github.com/fabiocabri
 
 Este projeto é uma variação do **[FIWARE Descomplicado](https://github.com/fabiocabrini/fiware)**, desenvolvido pelo **Prof. Fábio Henrique Cabrini** da FIAP. O projeto original fornece a infraestrutura base para integração de dispositivos IoT com a plataforma FIWARE, utilizando MQTT, Orion Context Broker e IoT Agent UltraLight.
 
-A partir dessa base, foram adicionados os módulos de pedômetro com ESP32, vínculo de usuário via NFC e monitor LED de atividade física. Todo o crédito pela arquitetura e stack FIWARE é do professor.
+A partir dessa base, foram adicionados os módulos de pedômetro com ESP32, vínculo de usuário via NFC e Lâmpada de LED de atividade física. Todo o crédito pela arquitetura e stack FIWARE é do professor.
 
 > 📎 Repositório original: [github.com/fabiocabrini/fiware](https://github.com/fabiocabrini/fiware)
 
