@@ -272,7 +272,24 @@ Este projeto é derivado do [FIWARE Descomplicado](https://github.com/fabiocabri
 - Nenhuma alteração nas imagens Docker originais do FIWARE
 
 ---
+## Atenção antes de começar
 
+Se você já possui alguma instalação do FIWARE, FIWARE Descomplicado ou qualquer
+variação rodando na máquina, é necessário remover todos os containers e volumes
+antes de clonar e subir este projeto. Containers com o mesmo nome em conflito
+causam falhas silenciosas no envio de dados.
+
+```bash
+# Para e remove todos os containers
+sudo docker stop $(sudo docker ps -q)
+sudo docker rm $(sudo docker ps -aq)
+
+# Remove volumes para garantir ambiente limpo (atenção: apaga dados persistidos)
+sudo docker volume prune -f
+```
+
+Após limpar, clone o repositório e siga os passos de configuração normalmente.
+---
 ## Créditos
 
 Este projeto é uma variação do **[FIWARE Descomplicado](https://github.com/fabiocabrini/fiware)**, desenvolvido pelo **Prof. Fábio Henrique Cabrini** da FIAP. O projeto original fornece a infraestrutura base para integração de dispositivos IoT com a plataforma FIWARE, utilizando MQTT, Orion Context Broker e IoT Agent UltraLight.
