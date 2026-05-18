@@ -12,10 +12,10 @@
  
 // ========== CONFIGURAÇÕES MQTT ==========
 const char* topicPrefix        = "step001";
-const char* SSID               = "FIAP-IOT";
-const char* PASSWORD           = "F!@p25.IOT";
-const char* BROKER_MQTT        = "34.95.171.195";
-const int   BROKER_PORT        = 1883;
+const char* SSID               = ""; // <- nome da rede wifi
+const char* PASSWORD           = "";// <- nome da senha
+const char* BROKER_MQTT        = "34.95.171.195"; // <- ip do fiware
+const int   BROKER_PORT        = 1883;// <- porta padrão, NÃO MUDAR
 const char* TOPICO_SUBSCRIBE   = "/TEF/step001/cmd";
 const char* TOPICO_ATTRS       = "/ul/TEF/step001/attrs";
 const char* ID_MQTT            = "fiware_step001";
