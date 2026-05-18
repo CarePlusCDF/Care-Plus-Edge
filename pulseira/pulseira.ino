@@ -1,290 +1,411 @@
 //Autores: Gabriel Ardito, Felipe Menezes, João Sarracine, João Gonzales
-//Resumo: Esse programa possibilita ligar e desligar o ledRgb, além de permetir o usuário escolher entre cores predefinidas, códigos hexadecimáis e adicionar cores novase também manda o status para o Broker MQTT possibilitando o Helix saber
-//se o led está ligado ou desligado.
-//Revisões:
-
-
-//importando bibliotecas
+//Projeto: Boost Care - Pulseira Inteligente
+//Descrição: Pulseira com detecção de movimento (MPU6050), sensor touch capacitivo (4 vias),
+//           vibração (vibracall), comunicação MQTT/FIWARE e contagem de passos com metas.
+//Revisão: Sprint 3
+ 
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Wire.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
-#include <vector>
-// Configurações - variáveis editáveis
-const char* default_SSID = "Wokwi GUEST"; // Nome da rede Wi-Fi
-const char* default_PASSWORD = ""; // Senha da rede Wi-Fi
-const char* default_BROKER_MQTT = "bore.pub"; // IP do Broker MQTT
-const int default_BROKER_PORT = 33313; // Porta do Broker MQTT
-const char* default_TOPICO_SUBSCRIBE = "/TEF/lamp002/cmd"; // Tópico MQTT de escuta
-const char* default_TOPICO_SUBSCRIBE2 = "/TEF/lamp002/cmd/"; // Tópico MQTT de escuta // recebendo mudanca de cor
-const char* default_TOPICO_PUBLISH_1 = "/TEF/lamp002/attrs"; // Tópico MQTT de envio de informações para Broker
-const char* default_TOPICO_PUBLISH_2 = "/TEF/lamp002/attrs/l"; // Tópico MQTT de envio de informações para Broker
-const char* default_PICO_PUBLISH_3 = "/tef/lamp";
-const char* default_ID_MQTT = "fiware_001"; // ID MQTT
-
-// Declaração da variável para o prefixo do tópico
-const char* topicPrefix = "lamp002";
  
-// Variáveis para configurações editáveis
-char* SSID = const_cast<char*>(default_SSID);
-char* PASSWORD = const_cast<char*>(default_PASSWORD);
-char* BROKER_MQTT = const_cast<char*>(default_BROKER_MQTT);
-int BROKER_PORT = default_BROKER_PORT;
-char* TOPICO_SUBSCRIBE = const_cast<char*>(default_TOPICO_SUBSCRIBE);
-char* TOPICO_PUBLISH_1 = const_cast<char*>(default_TOPICO_PUBLISH_1);
-char* TOPICO_PUBLISH_2 = const_cast<char*>(default_TOPICO_PUBLISH_2);
-char* ID_MQTT = const_cast<char*>(default_ID_MQTT);
-
+// ========== CONFIGURAÇÕES MQTT ==========
+const char* topicPrefix        = "step001";
+const char* SSID               = "FIAP-IOT";
+const char* PASSWORD           = "F!@p25.IOT";
+const char* BROKER_MQTT        = "34.95.171.195";
+const int   BROKER_PORT        = 1883;
+const char* TOPICO_SUBSCRIBE   = "/TEF/step001/cmd";
+const char* TOPICO_ATTRS       = "/ul/TEF/step001/attrs";
+const char* ID_MQTT            = "fiware_step001";
  
-//iniciando tratamento de portas do difusor, cada letra do rgb se comporta como um led independente, por isso 3 entradas
-const int RED_PIN = 25;
-const int GREEN_PIN = 26;
-const int BLUE_PIN = 27;
+// ========== CONFIGURAÇÕES DE PASSOS ==========
+const int          PASSOS_MINIMOS = 10;
+const unsigned long JANELA_MS      = 30UL * 1000;
+const unsigned long PUBLISH_MS     = 10UL * 1000;
  
-WiFiClient espClient;
-PubSubClient MQTT(espClient);
-char EstadoSaida = '0';
-
-std::vector<String> nomesCores = {"ligar", "desligar", "vermelho", "azul", "verde", "amarelo"};
-std::vector<String> hexaCores = {"#FFFFFF", "#000000", "#FF0000", "#0000FF", "#00FF00", "#FFFF00"};
-void initSerial() {
-    Serial.begin(115200);
+// ========== PINOS ESP32-S3 MINI ==========
+const int VIBRACALL_PIN   = 4;      // Vibracall (motor vibratório)
+const int TOUCH_1_PIN     = 5;      // Touch capacitivo 1
+const int TOUCH_2_PIN     = 6;      // Touch capacitivo 2
+const int TOUCH_3_PIN     = 7;      // Touch capacitivo 3
+const int TOUCH_4_PIN     = 10;     // Touch capacitivo 4
+const int SDA_PIN         = 20;     // SDA do MPU6050
+const int SCL_PIN         = 21;     // SCL do MPU6050
+ 
+// ========== CONFIGURAÇÕES DE VIBRAÇÃO ==========
+const int VIBRA_INTENSITY = 200;    // Intensidade PWM (0-255)
+const int VIBRA_FREQ      = 1000;   // Frequência PWM em Hz
+const int VIBRA_DURATION  = 100;    // Duração de cada pulso em ms
+ 
+// ========== CONFIGURAÇÕES DE TOUCH ==========
+const unsigned long DEBOUNCE_TOUCH_MS = 200;
+const unsigned long SOS_HOLD_MS       = 3000;
+ 
+// ========== VARIÁVEIS DE ESTADO ==========
+bool          estadoAnteriorTouch[4] = {LOW, LOW, LOW, LOW};
+unsigned long ultimoDebounceTouch[4] = {0, 0, 0, 0};
+unsigned long pressaoInicioSOS       = 0;
+bool          sosAguardando          = false;
+ 
+// ========== WIFI E MQTT ==========
+WiFiClient       espClient;
+PubSubClient     MQTT(espClient);
+ 
+// ========== MPU6050 ==========
+Adafruit_MPU6050 mpu;
+sensors_event_t  event;
+ 
+// ========== VARIÁVEIS DE PASSOS ==========
+int           passos        = 0;
+int           passosJanela  = 0;
+unsigned long ultimoPasso   = 0;
+unsigned long inicioJanela  = 0;
+unsigned long ultimoPublish = 0;
+float         anterior      = 0;
+bool          vibrando      = false;
+ 
+// ========== VARIÁVEIS DE VIBRAÇÃO ==========
+unsigned long ultimaVibracao = 0;
+bool          contadorVibracall = false;
+ 
+// ============================================
+// FUNÇÕES DE VIBRAÇÃO
+// ============================================
+ 
+void iniciarVibracall() {
+  digitalWrite(VIBRACALL_PIN, HIGH);
+  contadorVibracall = true;
+  ultimaVibracao = millis();
+  Serial.println(">> Vibração iniciada.");
 }
-
+ 
+void pararVibracall() {
+  digitalWrite(VIBRACALL_PIN, LOW);
+  contadorVibracall = false;
+  vibrando = false;
+  Serial.println(">> Vibração parada.");
+}
+ 
+void vibrarPulsos(int numPulsos, int delayMs) {
+  for (int i = 0; i < numPulsos; i++) {
+    digitalWrite(VIBRACALL_PIN, HIGH);
+    delay(delayMs);
+    digitalWrite(VIBRACALL_PIN, LOW);
+    delay(delayMs);
+  }
+}
+ 
+// ============================================
+// FUNÇÕES DE WIFI
+// ============================================
+ 
 void initWiFi() {
-    delay(10);
-    Serial.println("------Conexao WI-FI------");
-    Serial.print("Conectando-se na rede: ");
-    Serial.println(SSID);
-    Serial.println("Aguarde");
-    reconectWiFi();
-}
- 
-void initMQTT() {
-    MQTT.setServer(BROKER_MQTT, BROKER_PORT);
-    MQTT.setCallback(mqtt_callback);
-}
- 
-void setup() {
-    InitOutput();
-    initSerial();
-    initWiFi();
-    initMQTT();
-    delay(5000);
-    MQTT.publish(TOPICO_PUBLISH_1, "s|on");
-}
- 
-void loop() {
-    VerificaConexoesWiFIEMQTT();
-    EnviaEstadoOutputMQTT();
-    handleLuminosity();
-    MQTT.loop();
+  WiFi.begin(SSID, PASSWORD);
+  Serial.print("Conectando ao WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(100);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.print("WiFi conectado. IP: ");
+  Serial.println(WiFi.localIP());
 }
  
 void reconectWiFi() {
-    if (WiFi.status() == WL_CONNECTED)
-        return;
-    WiFi.begin(SSID, PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(100);
-        Serial.print(".");
-    }
-    Serial.println();
-    Serial.println("Conectado com sucesso na rede ");
-    Serial.print(SSID);
-    Serial.println("IP obtido: ");
-    Serial.println(WiFi.localIP());
-    //Garante que o Led inicie apagado
-    setarCorPraHex("#000000");
-   
+  if (WiFi.status() != WL_CONNECTED) initWiFi();
 }
+ 
+// ============================================
+// FUNÇÕES MQTT
+// ============================================
  
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
-    String msg;
-
-    for (int i = 0; i < length; i++) {
-        char c = (char)payload[i];
-        msg += c;
-    }
-
-    // tratando a mensagem antes das validacoes
-    msg.trim();
-    msg.toLowerCase();
-    Serial.print("- Mensagem recebida: ");
-    Serial.println(msg);
+  String msg = "";
+  for (int i = 0; i < length; i++) msg += (char)payload[i];
+  Serial.print("Comando recebido: ");
+  Serial.println(msg);
  
-    // procura o pipe
-    int pos = msg.indexOf('|');
-    // no caso de msg = "lamp001@cor|vermelho", corta tudo antes e deixa
-    if (pos != -1) {
-    msg = msg.substring(pos + 1);
-    }
-     
-
-
-    //aqui acresentamos a lógica de chamada da funcao de cor pra hexadecimal
-    if(msg.startsWith("#")){
-      Serial.println("cor recebida Hex:");
-      Serial.println(msg);
-      EstadoSaida = '1';
+  msg.toLowerCase();
+  msg.trim();
  
-      // chama funcao setarUsandoHexa passando msg como parametro
-      setarUsandoHexa(msg);
-    }else if(msg[0] == 'a' && msg[1] == 'd' && msg[2] == 'd'){ // "" é string, '' é char
-      adicionarNovaCor(msg);
-      EstadoSaida = '1';
-      return;
-
-    }else if(msg.length() > 0){
-      Serial.println("cor recebida Nome:");
-      Serial.println(msg);
-      setarUsandoNome(msg);
-
-    }if (msg == "#000000" || msg == "desligar") {
-      EstadoSaida = '0';
-    }
-
-    }
-
-// verifica se o MQTT está conectado
-void VerificaConexoesWiFIEMQTT() {
-    if (!MQTT.connected()){
-        reconnectMQTT();
-        }
-    reconectWiFi();
-}
-
-// printa o estado do Led na Serial
-void EnviaEstadoOutputMQTT() {
-    if (EstadoSaida == '1') {
-        Serial.println("- Led Ligado"); 
-    }
- 
-    if (EstadoSaida == '0') {
-        Serial.println("- Led Desligado");
-    }
-    Serial.println("- Estado do LED enviado ao broker!");
-    delay(1000);
+  if (msg.indexOf("agua") != -1) {
+    Serial.println(">> Comando 'agua' recebido.");
+    vibrarPulsos(2, 150);
+  }
 }
  
-void InitOutput() {
-    pinMode(RED_PIN, OUTPUT);
-    pinMode(GREEN_PIN, OUTPUT);
-    pinMode(BLUE_PIN, OUTPUT);
-}
 void reconnectMQTT() {
-    while (!MQTT.connected()) {
-        Serial.print("* Tentando se conectar ao Broker MQTT: ");
-        Serial.println(BROKER_MQTT);
-        if (MQTT.connect(ID_MQTT)) {
-            Serial.println("Conectado com sucesso ao broker MQTT!");
-            MQTT.subscribe(TOPICO_SUBSCRIBE);
-        } else {
-            Serial.println("Falha ao reconectar no broker.");
-            Serial.println("Haverá nova tentativa de conexão em 2s");
-            delay(2000);
-        }
+  while (!MQTT.connected()) {
+    Serial.print("Conectando ao broker MQTT...");
+    if (MQTT.connect(ID_MQTT)) {
+      Serial.println(" conectado!");
+      MQTT.subscribe(TOPICO_SUBSCRIBE);
+    } else {
+      Serial.println(" falha. Tentando em 2s.");
+      delay(2000);
     }
-}
-
-void handleLuminosity() {
-    const int potPin = 34;
-    int sensorValue = analogRead(potPin);
-    int luminosity = map(sensorValue, 0, 4095, 0, 100);// mapeando o valor da luminosidade, para 0 a 100
-    String mensagem = String(luminosity);
-    Serial.print("Valor da luminosidade: ");
-    Serial.println(mensagem.c_str());
-    MQTT.publish(TOPICO_PUBLISH_2, mensagem.c_str());
+  }
 }
  
-// funcao que converte o hexadecimal em RGB
+void verificaConexoes() {
+  reconectWiFi();
+  if (!MQTT.connected()) reconnectMQTT();
+}
  
-void setarCorPraHex(String hexColor){
-  // removendo o # caso a string seja "#xxxxx" por exemplo, deixando só os caractere numéricos
-  if (hexColor.startsWith("#")){
-    hexColor.remove(0, 1);
+// ============================================
+// FUNÇÕES DE PUBLICAÇÃO
+// ============================================
+ 
+void publicarDados() {
+  float mediaMin = (passosJanela > 0) ? (float)passosJanela * (60000.0 / JANELA_MS) : 0;
+ 
+  char payload[64];
+  snprintf(payload, sizeof(payload), "p|%d|m|%.1f", passos, mediaMin);
+  MQTT.publish(TOPICO_ATTRS, payload);
+ 
+  Serial.println("─────────────────────────────────");
+  Serial.print("Publicado | Passos totais: ");
+  Serial.print(passos);
+  Serial.print(" | Média: ");
+  Serial.print(mediaMin);
+  Serial.println(" passos/min");
+  Serial.println("─────────────────────────────────");
+ 
+  passosJanela = 0;
+}
+ 
+void publicarToque(const char* evento) {
+  char payload[64];
+  snprintf(payload, sizeof(payload), "t|%s", evento);
+  MQTT.publish(TOPICO_ATTRS, payload);
+  Serial.print("Toque publicado: ");
+  Serial.println(payload);
+}
+ 
+// ============================================
+// INICIALIZAÇÃO DE PINOS
+// ============================================
+ 
+void initPinos() {
+  // Vibracall como saída
+  pinMode(VIBRACALL_PIN, OUTPUT);
+  digitalWrite(VIBRACALL_PIN, LOW);
+ 
+  // Touch capacitivo como entradas
+  pinMode(TOUCH_1_PIN, INPUT);
+  pinMode(TOUCH_2_PIN, INPUT);
+  pinMode(TOUCH_3_PIN, INPUT);
+  pinMode(TOUCH_4_PIN, INPUT);
+ 
+  Serial.println("Pinos inicializados com sucesso!");
+}
+ 
+// ============================================
+// LEITURA DOS SENSORES TOUCH
+// ============================================
+ 
+void lerSensoresTouch() {
+  unsigned long agora = millis();
+  int pinosToque[4] = {TOUCH_1_PIN, TOUCH_2_PIN, TOUCH_3_PIN, TOUCH_4_PIN};
+  const char* nomesToques[4] = {"missao_progresso", "missao_saiu", "agua_confirmada", "sos"};
+ 
+  // Processamento dos 3 primeiros botões (touch 1, 2, 3)
+  for (int i = 0; i < 3; i++) {
+    int leitura = digitalRead(pinosToque[i]);
+ 
+    if (leitura != estadoAnteriorTouch[i]) {
+      ultimoDebounceTouch[i] = agora;
+      estadoAnteriorTouch[i] = leitura;
+    }
+ 
+    if ((agora - ultimoDebounceTouch[i]) >= DEBOUNCE_TOUCH_MS && leitura == HIGH) {
+      switch (i) {
+        case 0:
+          publicarToque("missao_progresso");
+          Serial.println(">> Toque 1 - Progresso na missão registrado.");
+          vibrarPulsos(1, 100);
+          break;
+        case 1:
+          publicarToque("missao_saiu");
+          Serial.println(">> Toque 2 - Saiu da missão.");
+          vibrarPulsos(2, 100);
+          break;
+        case 2:
+          publicarToque("agua_confirmada");
+          Serial.println(">> Toque 3 - Hidratação confirmada.");
+          if (vibrando) pararVibracall();
+          vibrarPulsos(1, 150);
+          break;
+      }
+      estadoAnteriorTouch[i] = LOW;
+    }
   }
  
-  // convertendo a string recebida em um numero inteiro que o esp consegue usar
-  // esp normalmente tem 32 bits
-  // exemplo: 0xFFFFFF = 16777215
-  //strtol -> String To Long ou seja, texto pra numero
-  //hexColor.c_str() --> conversão de tipo, temos String hexColor, mas o strtol() não aceita String, ele aceita chars 
-  // resumidamente, transformamos String "#FF0000" em FF0000 (formato C)
-  // NULL indica onde a conversão deve parar, sem isso oq não é numero ficaria como "endptr", não queremos isso.
-  // com o 16 estamos ditando a base numérica que queremos, Hex de 16, tamo quase lá
-  //vai ficar mais ou menos assim:
-  //  FF AA 33
-  //  │  │  │
-  //  R  G  B
-  // IMPORTANTE --> O hexadecimal já é RGB compactado em 24 bits. Por isso separamos por >> (Bit Shifting)
-  long number = strtol(hexColor.c_str(), NULL, 16);
+  // Processamento do botão SOS (touch 4) - segura 3s
+  int leituraSOS = digitalRead(TOUCH_4_PIN);
  
-  // feito isso, podemos só declarar:
-  // 0xFF indica pro compilador que o valor tá em hexadecimal
-  int r = number >> 16;
-  int g = (number >> 8) & 0xFF;
-  int b= number & 0xFF;
+  if (leituraSOS != estadoAnteriorTouch[3]) {
+    ultimoDebounceTouch[3] = agora;
+    estadoAnteriorTouch[3] = leituraSOS;
+  }
  
-    analogWrite(RED_PIN, r);
-    analogWrite(GREEN_PIN, g);
-    analogWrite(BLUE_PIN, b);
+  if (agora - ultimoDebounceTouch[3] >= DEBOUNCE_TOUCH_MS) {
+    if (leituraSOS == HIGH && !sosAguardando) {
+      sosAguardando = true;
+      pressaoInicioSOS = agora;
+      Serial.println(">> Botão SOS pressionado. Aguardando 3s para confirmação...");
+      vibrarPulsos(2, 150);
+    }
+    if (leituraSOS == LOW && sosAguardando) {
+      sosAguardando = false;
+      Serial.println(">> Botão SOS liberado antes de 3s.");
+    }
+    if (sosAguardando && (agora - pressaoInicioSOS >= SOS_HOLD_MS)) {
+      publicarToque("sos");
+      Serial.println(">> SOS ENVIADO! Alerta de emergência ativado.");
+      vibrarPulsos(5, 200);
+      sosAguardando = false;
+    }
+  }
+}
  
-    Serial.print("RGB -> ");
-    Serial.print(r);
-    Serial.print(",");
-    Serial.print(g);
-    Serial.print(",");
-    Serial.println(b);
-}
-
-void setarUsandoNome(String msg) {
-    msg.trim();
-    msg.toLowerCase();
-
-    // Com vector, usamos .size() para saber quantos itens existem
-    int total = nomesCores.size(); 
-
-    for (int i = 0; i < total; i++) {
-        if (msg == nomesCores[i]) {
-            Serial.print("Sucesso! Nome: "); Serial.print(nomesCores[i]);
-            Serial.print(" -> Hex: "); Serial.println(hexaCores[i]);
-            EstadoSaida ='1';
-            setarCorPraHex(hexaCores[i]);
-            return; // Encontrou? Sai da função.
-        }
-        
-    }Serial.println("Cor nao encontrada na lista.");
-    EstadoSaida = '0';
-}
-
-void setarUsandoHexa(String msg){
-  setarCorPraHex(msg);
-}
-
-void adicionarNovaCor(String msg) {
-  // No Arduino, usamos int ou size_t, mas o retorno de erro é -1
-  int pos1 = msg.indexOf('|'); 
-  int pos2 = msg.indexOf('|', pos1 + 1);
-
-  // Verificamos se encontrou os dois pipes (-1 significa não encontrado)
-  if (pos1 != -1 && pos2 != -1) {
-    
-    // No Arduino: substring(inicio, fim) 
-    // Diferente do C++ padrão, o segundo parâmetro é a POSIÇÃO FINAL, não o tamanho.
-    String nomeCor = msg.substring(pos1 + 1, pos2); 
-    String hexaCor = msg.substring(pos2 + 1);
-
-    nomesCores.push_back(nomeCor);
-    hexaCores.push_back(hexaCor);
-
-    Serial.print("Nova cor cadastrada: ");
-    Serial.println(nomeCor);
-
-    EstadoSaida = '1';
-    Serial.println(EstadoSaida);
-    setarUsandoNome(nomeCor);
-
-
+// ============================================
+// SETUP
+// ============================================
+ 
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("\n\n=== BOOST CARE - PULSEIRA INTELIGENTE ===\n");
+ 
+  // Inicializa pinos
+  initPinos();
+ 
+  // Inicializa MPU6050 com I2C customizado
+  Wire.setPins(SDA_PIN, SCL_PIN);
+  Wire.begin();
+ 
+  int tentativas = 0;
+  while (!mpu.begin() && tentativas < 5) {
+    Serial.print("MPU6050 não encontrado... tentativa ");
+    Serial.println(tentativas + 1);
+    delay(1000);
+    tentativas++;
+  }
+ 
+  if (tentativas >= 5) {
+    Serial.println("ERRO: MPU6050 não inicializou!");
   } else {
-    Serial.println("Erro no formato! Use: add|nome|#hexa");
+    Serial.println("MPU6050 pronto!");
+    mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
+    mpu.setGyroRange(MPU6050_RANGE_250_DEG);
   }
+ 
+  // Inicializa WiFi e MQTT
+  initWiFi();
+  MQTT.setServer(BROKER_MQTT, BROKER_PORT);
+  MQTT.setCallback(mqtt_callback);
+ 
+  inicioJanela  = millis();
+  ultimoPublish = millis();
+ 
+  Serial.println("=================================");
+  Serial.print("Dispositivo: ");
+  Serial.println(topicPrefix);
+  Serial.print("Meta: ");
+  Serial.print(PASSOS_MINIMOS);
+  Serial.print(" passos em ");
+  Serial.print(JANELA_MS / 1000);
+  Serial.println("s");
+  Serial.println("Touch 1: Progresso Missão");
+  Serial.println("Touch 2: Sair Missão");
+  Serial.println("Touch 3: Confirmar Água");
+  Serial.println("Touch 4: SOS (segura 3s)");
+  Serial.println("=================================\n");
+ 
+  vibrarPulsos(3, 100);
+}
+ 
+// ============================================
+// LOOP PRINCIPAL
+// ============================================
+ 
+void loop() {
+  unsigned long agora = millis();
+ 
+  // Verifica conexões
+  verificaConexoes();
+  MQTT.loop();
+ 
+  // Lê acelerômetro
+  mpu.getAccelerometerSensor()->getEvent(&event);
+  float total = sqrt(
+    event.acceleration.x * event.acceleration.x +
+    event.acceleration.y * event.acceleration.y +
+    event.acceleration.z * event.acceleration.z
+  );
+ 
+  // Detecta passos
+  float delta = total - anterior;
+  if (delta > 3 && agora - ultimoPasso > 500) {
+    passos++;
+    passosJanela++;
+    ultimoPasso = agora;
+ 
+    unsigned long restante = (JANELA_MS - (agora - inicioJanela)) / 1000;
+    Serial.print("Passo! Total: ");
+    Serial.print(passos);
+    Serial.print(" | Janela restante: ");
+    Serial.print(restante);
+    Serial.println("s");
+ 
+    if (vibrando) pararVibracall();
+ 
+    vibrarPulsos(1, 50);
+  }
+  anterior = total;
+ 
+  // Lê sensores touch
+  lerSensoresTouch();
+ 
+  // Publica dados periodicamente
+  if (agora - ultimoPublish >= PUBLISH_MS) {
+    publicarDados();
+    ultimoPublish = agora;
+  }
+ 
+  // Verifica fim da janela
+  if (agora - inicioJanela >= JANELA_MS) {
+    Serial.println("=================================");
+    Serial.print("Janela encerrada. Passos: ");
+    Serial.print(passosJanela);
+    Serial.print(" / Meta: ");
+    Serial.println(PASSOS_MINIMOS);
+ 
+    if (passosJanela < PASSOS_MINIMOS) {
+      Serial.print("Meta não atingida! Faltaram ");
+      Serial.print(PASSOS_MINIMOS - passosJanela);
+      Serial.println(" passos. Vibrando...");
+      vibrando = true;
+      iniciarVibracall();
+    } else {
+      Serial.println("Meta atingida! Parabéns!");
+      vibrarPulsos(2, 150);
+    }
+    Serial.println("=================================\n");
+ 
+    passosJanela = 0;
+    inicioJanela = agora;
+  }
+ 
+  // Mantém vibração contínua se necessário
+  if (vibrando && contadorVibracall) {
+    if (agora - ultimaVibracao >= (VIBRA_DURATION * 2)) {
+      pararVibracall();
+    }
+  }
+ 
+  delay(50);
 }
