@@ -17,7 +17,6 @@ import requests
 import json
 import datetime
 import os
-
 # ── Configuração ───────────────────────────────────────────────────────────────
 FIWARE_IP   = os.environ.get("FIWARE_IP", "35.247.231.140")
 ORION_PORT  = int(os.environ.get("ORION_PORT", 1026))
@@ -182,6 +181,36 @@ HTML_CONFIRM = """<!DOCTYPE html>
     .device-label {{ font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }}
     .device-id    {{ font-size: 15px; font-weight: 600; color: var(--primary); margin-top: 2px; }}
 
+    .field {{
+      margin-bottom: 28px;
+    }}
+    .field-label {{
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }}
+    .field-input {{
+      width: 100%;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      color: var(--text);
+      background: var(--bg);
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }}
+    .field-input:focus {{
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(10,110,110,0.12);
+    }}
+    .field-input::placeholder {{
+      color: #A0AEBB;
+    }}
     .btn-confirm {{
       width: 100%;
       padding: 16px;
@@ -266,14 +295,19 @@ HTML_CONFIRM = """<!DOCTYPE html>
       </div>
 
       <h1 class="question">Deseja vincular seu dispositivo à Pulseira?</h1>
-      <p class="sub">Ao confirmar, este celular será associado ao monitor de atividade identificado abaixo.</p>
+      <p class="sub">Digite um nome para identificar sua pulseira e confirme o vínculo.</p>
 
       <div class="device-info">
         <div class="device-dot"></div>
         <div class="device-text">
-          <div class="device-label">Dispositivo detectado</div>
+          <div class="device-label">Dispositivo</div>
           <div class="device-id">{device_id}</div>
         </div>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="nomeInput">Apelido da pulseira</label>
+        <input class="field-input" id="nomeInput" type="text" placeholder="Ex: Pulseira do João" maxlength="60" autocomplete="off">
       </div>
 
       <button class="btn-confirm" id="btnConfirm" onclick="confirmar()">
@@ -291,9 +325,15 @@ HTML_CONFIRM = """<!DOCTYPE html>
 
   <script>
     function confirmar() {{
+      const nome = document.getElementById('nomeInput').value.trim();
+      if (!nome) {{
+        document.getElementById('nomeInput').focus();
+        document.getElementById('nomeInput').style.borderColor = 'var(--danger)';
+        return;
+      }}
       const btn = document.getElementById('btnConfirm');
       btn.classList.add('loading');
-      fetch('/confirmar?tag={nfc_id}&device={device_id}')
+      fetch('/confirmar?tag={nfc_id}&device={device_id}&nome=' + encodeURIComponent(nome))
         .then(r => r.text())
         .then(html => {{ document.open('text/html','replace'); document.write(html); }})
         .catch(() => {{ btn.classList.remove('loading'); alert('Erro de conexão. Tente novamente.'); }});
@@ -360,8 +400,12 @@ HTML_SUCESSO = """<!DOCTYPE html>
         <svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
       </div>
       <h1>Pulseira vinculada!</h1>
-      <p class="sub">Seu dispositivo foi associado com sucesso. Os dados de atividade serão sincronizados automaticamente.</p>
+      <p class="sub">A pulseira <strong>{nome}</strong> foi vinculada com sucesso. Os dados de atividade serão sincronizados automaticamente.</p>
       <div class="info-grid">
+        <div class="info-row">
+          <div class="info-label">Apelido</div>
+          <div class="info-value">{nome}</div>
+        </div>
         <div class="info-row">
           <div class="info-label">Dispositivo</div>
           <div class="info-value">{device_id}</div>
@@ -420,8 +464,8 @@ HTML_ERRO = """<!DOCTYPE html>
 </html>"""
 
 
-def patch_nfc_id(device_id: str, nfc_id: str) -> tuple[bool, str]:
-    url = f"{ORION_BASE}/{device_id}/attrs"
+def patch_nfc_id(device_id: str, nfc_id: str, nome: str = "") -> tuple[bool, str]:
+    url = f"{ORION_BASE}/{urllib.parse.quote(device_id)}/attrs"
     payload = {
         "nfcId": {
             "value": nfc_id,
@@ -434,6 +478,11 @@ def patch_nfc_id(device_id: str, nfc_id: str) -> tuple[bool, str]:
             }
         }
     }
+    if nome:
+        payload["name"] = {
+            "value": nome,
+            "type": "Text"
+        }
     headers = {
         "Content-Type":       "application/json",
         "fiware-service":     "smart",
@@ -476,14 +525,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         params = urllib.parse.parse_qs(parsed.query)
 
         # ── Passo 1: exibe página de confirmação ──────────────────────────────
-        if parsed.path == "/vincular":
+        if parsed.path == "/":
             nfc_id    = params.get("tag",    [None])[0]
             device_id = params.get("device", [None])[0]
 
             if not nfc_id or not device_id:
                 self.send_html(400, HTML_ERRO.format(
                     titulo="Parâmetros inválidos",
-                    detalhe="URL precisa conter ?tag=UID&device=ID_DO_DISPOSITIVO"
+                    detalhe="URL precisa conter ?tag=UID&device=ID"
                 ))
                 return
 
@@ -497,6 +546,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/confirmar":
             nfc_id    = params.get("tag",    [None])[0]
             device_id = params.get("device", [None])[0]
+            nome      = params.get("nome",   [None])[0] or ""
 
             if not nfc_id or not device_id:
                 self.send_html(400, HTML_ERRO.format(
@@ -505,16 +555,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 ))
                 return
 
-            sucesso, msg = patch_nfc_id(device_id, nfc_id)
+            sucesso, msg = patch_nfc_id(device_id, nfc_id, nome)
 
             if sucesso:
                 ts = datetime.datetime.now().strftime("%d/%m/%Y às %H:%M")
+                extra = f" ({nome})" if nome else ""
                 self.send_html(200, HTML_SUCESSO.format(
                     nfc_id=nfc_id,
                     device_id=device_id,
+                    nome=nome or device_id,
                     timestamp=ts
                 ))
-                print(f"[OK] Vinculado: tag={nfc_id} → device={device_id}")
+                print(f"[OK] Vinculado: tag={nfc_id} → device={device_id}{extra}")
             else:
                 self.send_html(500, HTML_ERRO.format(
                     titulo="Falha ao vincular",

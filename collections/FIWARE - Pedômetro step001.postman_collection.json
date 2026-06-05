@@ -678,14 +678,14 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "http://{{url}}:8080/vincular?tag=04A3B2C1D4E5F6&device=step001",
+              "raw": "http://{{url}}:8080/?tag=04A3B2C1D4E5F6&device=urn:ngsi-ld:Pedometer:001",
               "protocol": "http",
               "host": [
                 "{{url}}"
               ],
               "port": "8080",
               "path": [
-                "vincular"
+                ""
               ],
               "query": [
                 {
@@ -695,8 +695,8 @@
                 },
                 {
                   "key": "device",
-                  "value": "step001",
-                  "description": "ID do dispositivo no IoT Agent"
+                  "value": "urn:ngsi-ld:Pedometer:001",
+                  "description": "ID da entidade no Orion"
                 }
               ]
             },
